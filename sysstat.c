@@ -4,6 +4,7 @@
 #include <sys/utsname.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
+#include <sys/timerfd.h>
 
 #include <mpd/client.h>
 #include <yajl/yajl_gen.h>
@@ -15,6 +16,7 @@
 #include <pwd.h>
 #include <string.h>
 #include <time.h>
+#include <poll.h>
 
 #include "fuzzyclock.h"
 
@@ -337,11 +339,13 @@ static char *get_free_storage(void)
 }
 
 static void
-print_record(yajl_gen yajl, const char *record, const char *shortrecord, const char *color, bool separator)
+print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool separator)
 {
 	if (!record) return;
 
 	yajl_gen_map_open(yajl);
+	yajl_gen_string(yajl, CUC("name"), strlen("name"));
+	yajl_gen_string(yajl, CUC(name), strlen(name));
 	yajl_gen_string(yajl, CUC("full_text"), strlen("full_text"));
 	yajl_gen_string(yajl, CUC(record), strlen(record));
 	if (shortrecord) {
@@ -384,6 +388,23 @@ main(void)
 	const unsigned char *yajl_output;
 	size_t yajl_output_len;
 
+	int timer = timerfd_create(CLOCK_MONOTONIC, 0);
+	uint64_t timerret;
+	if (timer == -1) {
+		goto cleanup;
+	}
+	if (timerfd_settime(timer, 0, &((struct itimerspec) {
+	                    .it_interval = ((struct timespec) {.tv_sec = refresh}),
+	                    /* Workaround to have the timer immediately trigger on start */
+	                    .it_value = ((struct timespec) {.tv_nsec = 1})
+	                    }), NULL) == -1) {
+		goto cleanup;
+	}
+
+	struct pollfd fds[] = {
+		{ .fd = timer, .events = POLLIN }
+	};
+
 	user = get_user();
 	if (user == NULL) {
 		goto cleanup;
@@ -400,46 +421,53 @@ main(void)
 	connection = mpd_connect();
 
 	for (;;) {
-		datetime = get_datetime();
-		uptime = get_uptime();
-		ram = get_ram_usage();
-		storage = get_free_storage();
-		if (connection) {
-			mpd = get_mpd(connection, false);
-			mpd_short = get_mpd(connection, true);
+		poll(fds, 1, -1);
+		if (fds[0].revents & POLLIN) {
+			/* Discard timer data */
+			(void)read(fds[0].fd, &timerret, sizeof(timerret));
+
+			datetime = get_datetime();
+			uptime = get_uptime();
+			ram = get_ram_usage();
+			storage = get_free_storage();
+			if (connection) {
+				mpd = get_mpd(connection, false);
+				mpd_short = get_mpd(connection, true);
+			}
+
+			yajl_gen_array_open(yajl);
+			if (mpd) {
+				print_record(yajl, "mpd", "MPD", NULL, "#b72f62", true);
+				print_record(yajl, "mpd", mpd, mpd_short, NULL, true);
+			}
+			print_record(yajl, "hd", "HD", NULL, "#7996a9", false);
+			print_record(yajl, "hd", storage, NULL, NULL, true);
+			print_record(yajl, "ram", "Ram", NULL, "#7996a9", false);
+			print_record(yajl, "ram", ram, NULL, NULL, true);
+			print_record(yajl, "uptime", "Up", NULL, "#b492b6", false);
+			print_record(yajl, "uptime", uptime, NULL, NULL, true);
+			print_record(yajl, "os", "Arch", NULL, "#b72f62", false);
+			print_record(yajl, "os", kernel, NULL, false, true);
+			print_record(yajl, "user", user, NULL, "#b492b6", true);
+			print_record(yajl, "datetime", datetime, NULL, "#ffebeb", false);
+			yajl_gen_array_close(yajl);
+
+			yajl_gen_get_buf(yajl, &yajl_output, &yajl_output_len);
+			fwrite(yajl_output, 1, yajl_output_len, stdout);
+			yajl_gen_clear(yajl);
+
+			printf("\n");
+			fflush(stdout);
+
+			free(datetime);
+			free(uptime);
+			free(ram);
+			free(storage);
+			if (connection) {
+				free(mpd);
+				free(mpd_short);
+			}
 		}
-
-		yajl_gen_array_open(yajl);
-		if (mpd) {
-			print_record(yajl, "MPD", NULL, "#b72f62", true);
-			print_record(yajl, mpd, mpd_short, NULL, true);
-		}
-		print_record(yajl, "HD", NULL, "#7996a9", false);
-		print_record(yajl, storage, NULL, NULL, true);
-		print_record(yajl, "Ram", NULL, "#7996a9", false);
-		print_record(yajl, ram, NULL, NULL, true);
-		print_record(yajl, "Up", NULL, "#b492b6", false);
-		print_record(yajl, uptime, NULL, NULL, true);
-		print_record(yajl, "Arch", NULL, "#b72f62", false);
-		print_record(yajl, kernel, NULL, false, true);
-		print_record(yajl, user, NULL, "#b492b6", true);
-		print_record(yajl, datetime, NULL, "#ffebeb", false);
-		yajl_gen_array_close(yajl);
-
-		yajl_gen_get_buf(yajl, &yajl_output, &yajl_output_len);
-		fwrite(yajl_output, 1, yajl_output_len, stdout);
-		yajl_gen_clear(yajl);
-
-		printf("\n");
-		fflush(stdout);
-
-		free(datetime);
-		free(uptime);
-		free(ram);
-		free(storage);
-		if (connection) free(mpd);
-
-		sleep(refresh);
 	}
 
 	mpd_connection_free(connection);
