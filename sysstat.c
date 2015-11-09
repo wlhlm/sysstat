@@ -8,6 +8,7 @@
 
 #include <mpd/client.h>
 #include <yajl/yajl_gen.h>
+#include <yajl/yajl_parse.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,151 @@
 const unsigned int refresh = 5;
 
 #define CUC(var) (const unsigned char *)var
+
+typedef enum {
+	EVENT_NAME,
+	EVENT_INSTANCE,
+	EVENT_X, EVENT_Y,
+	EVENT_BUTTON
+} ClickEventKey;
+
+typedef struct {
+	char *name;
+	char *instance;
+
+	uint32_t x;
+	uint32_t y;
+
+	uint32_t button;
+} ClickEvent;
+
+typedef struct {
+	ClickEventKey last_key;
+	ClickEvent event;
+} ParserContext;
+
+char *kernel;
+char *user;
+bool use_fuzzytime = true;
+struct mpd_connection *connection;
+yajl_handle yajl_parser;
+ParserContext yajl_parser_context;
+yajl_gen yajl_generator;
+
+static int stdin_start_map(void *context);
+static int stdin_map_key(void *context, const unsigned char *key, size_t len);
+static int stdin_string(void *context, const unsigned char *string, size_t len);
+static int stdin_integer(void *context, long long number);
+static int stdin_end_map(void *context);
+static inline int round_float_to_int(float f);
+static char *size_to_human_readable(double n);
+static char *get_kernel_string(void);
+static char *get_user(void);
+static char *get_ram_usage(void);
+static char *get_datetime(bool fuzzy);
+static char *get_disk_free(const char *mount);
+static char *get_uptime(void);
+static struct mpd_connection *mpd_connect(void);
+static float mpd_get_progress(struct mpd_connection *connection);
+static char *mpd_get_song(struct mpd_connection *connection, bool shorttext);
+static char *get_mpd(struct mpd_connection *connection, bool shorttext);
+static char *get_free_storage(void);
+static void print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool separator);
+static void print_setup(void);
+static void print_status(void);
+static void parse_click_event(const char *buffer, size_t length);
+static void handle_click_event(ClickEvent event);
+
+static int
+stdin_start_map(void *context)
+{
+	ParserContext *ctx = context;
+
+	/* Reset the ClickEvent memory */
+	memset(&(ctx->event), '\0', sizeof(ctx->event));
+
+	return 1;
+}
+
+static int
+stdin_map_key(void *context, const unsigned char *key, size_t len)
+{
+	ParserContext *ctx = context;
+	char *map_key = (char *)key;
+
+	if (strncmp(map_key, "name", len) == 0) {
+		ctx->last_key = EVENT_NAME;
+	}
+	else if (strncmp(map_key, "instance", len) == 0) {
+		ctx->last_key = EVENT_INSTANCE;
+	}
+	else if (strncmp(map_key, "x", len) == 0) {
+		ctx->last_key = EVENT_X;
+	}
+	else if (strncmp(map_key, "y", len) == 0) {
+		ctx->last_key = EVENT_Y;
+	}
+	else if (strncmp(map_key, "button", len) == 0) {
+		ctx->last_key = EVENT_BUTTON;
+	}
+
+	return 1;
+}
+
+static int
+stdin_string(void *context, const unsigned char *string, size_t len)
+{
+	ParserContext *ctx = context;
+	char *str;
+
+	if (!(str = malloc(len+1))) {
+		return 0;
+	}
+	snprintf(str, len+1, "%s", string);
+
+	if (ctx->last_key == EVENT_NAME) {
+		ctx->event.name = str;
+	}
+	else if (ctx->last_key == EVENT_INSTANCE) {
+		ctx->event.instance = str;
+	}
+	else {
+		free(str);
+	}
+
+	return 1;
+}
+
+static int
+stdin_integer(void *context, long long number)
+{
+	ParserContext *ctx = context;
+
+	if (ctx->last_key == EVENT_X) {
+		ctx->event.x = (uint32_t)number;
+	}
+	else if (ctx->last_key == EVENT_Y) {
+		ctx->event.y = (uint32_t)number;
+	}
+	else if (ctx->last_key == EVENT_BUTTON) {
+		ctx->event.button = (uint32_t)number;
+	}
+
+	return 1;
+}
+
+static int
+stdin_end_map(void *context)
+{
+	ParserContext *ctx = context;
+
+	handle_click_event(ctx->event);
+
+	free(ctx->event.name);
+	free(ctx->event.instance);
+
+	return 1;
+}
 
 static inline int
 round_float_to_int(float f)
@@ -128,29 +274,43 @@ get_ram_usage(void)
 }
 
 static char *
-get_datetime(void)
+get_datetime(bool fuzzy)
 {
 	time_t t;
 	struct tm *now;
 	char datestring[32];
-	char *fuzzytimestring, *timestring;
+	char *secondarytimestring, *timestring;
 
 	t = time(NULL);
 	now = localtime(&t);
-	if (strftime(datestring, 32, "%d-%b", now) == 0) {
-		return NULL;
-	}
-	if (!(fuzzytimestring = fuzzytime(now))) {
+	if (!strftime(datestring, 32, "%d-%b", now)) {
 		return NULL;
 	}
 
-	size_t len = strlen(datestring) + strlen(fuzzytimestring) + strlen(" ") + 1;
+	if (fuzzy) {
+		if (!(secondarytimestring = fuzzytime(now))) {
+			return NULL;
+		}
+	}
+	else {
+		if (!(secondarytimestring = calloc(32, sizeof(*secondarytimestring)))) {
+			return NULL;
+		}
+		if (!strftime(secondarytimestring, 32, "%H:%M", now)) {
+			printf("foo\n");
+			free(secondarytimestring);
+			return NULL;
+		}
+	}
+
+
+	size_t len = strlen(datestring) + strlen(secondarytimestring) + strlen(" ") + 1;
 	timestring = malloc(len);
 	if(!timestring) {
-		free(fuzzytimestring);
+		free(secondarytimestring);
 		return NULL;
 	}
-	snprintf(timestring, len, "%s %s", datestring, fuzzytimestring);
+	snprintf(timestring, len, "%s %s", datestring, secondarytimestring);
 
 	return timestring;
 }
@@ -314,7 +474,8 @@ get_mpd(struct mpd_connection *connection, bool shorttext)
 	return mpd;
 }
 
-static char *get_free_storage(void)
+static char *
+get_free_storage(void)
 {
 	char *freestring;
 	char *home, *root;
@@ -361,33 +522,85 @@ print_record(yajl_gen yajl, const char *name, const char *record, const char *sh
 	yajl_gen_map_close(yajl);
 }
 
-static yajl_gen
+static void
 print_setup(void)
 {
-	yajl_gen yajl;
-
-	yajl = yajl_gen_alloc(NULL);
-
-	printf("{\"version\":1}\n");
+	printf("{\"version\":1,\"click_events\":true}\n");
 	printf("[\n");
 
 	fflush(stdout);
 
-	yajl_gen_array_open(yajl);
-	yajl_gen_clear(yajl);
+	yajl_gen_array_open(yajl_generator);
+	yajl_gen_clear(yajl_generator);
+}
 
-	return yajl;
+static void
+print_status(void)
+{
+	char *datetime, *uptime, *ram, *storage, *mpd = NULL, *mpd_short = NULL;
+	const unsigned char *yajl_output;
+	size_t yajl_output_len;
+
+	datetime = get_datetime(use_fuzzytime);
+	uptime = get_uptime();
+	ram = get_ram_usage();
+	storage = get_free_storage();
+	if (connection) {
+		mpd = get_mpd(connection, false);
+		mpd_short = get_mpd(connection, true);
+	}
+
+	yajl_gen_array_open(yajl_generator);
+	if (mpd) {
+		print_record(yajl_generator, "mpd", "MPD", NULL, "#b72f62", true);
+		print_record(yajl_generator, "mpd", mpd, mpd_short, NULL, true);
+	}
+	print_record(yajl_generator, "hd", "HD", NULL, "#7996a9", false);
+	print_record(yajl_generator, "hd", storage, NULL, NULL, true);
+	print_record(yajl_generator, "ram", "Ram", NULL, "#7996a9", false);
+	print_record(yajl_generator, "ram", ram, NULL, NULL, true);
+	print_record(yajl_generator, "uptime", "Up", NULL, "#b492b6", false);
+	print_record(yajl_generator, "uptime", uptime, NULL, NULL, true);
+	print_record(yajl_generator, "os", "Arch", NULL, "#b72f62", false);
+	print_record(yajl_generator, "os", kernel, NULL, false, true);
+	print_record(yajl_generator, "user", user, NULL, "#b492b6", true);
+	print_record(yajl_generator, "datetime", datetime, NULL, "#ffebeb", false);
+	yajl_gen_array_close(yajl_generator);
+
+	yajl_gen_get_buf(yajl_generator, &yajl_output, &yajl_output_len);
+	fwrite(yajl_output, 1, yajl_output_len, stdout);
+	yajl_gen_clear(yajl_generator);
+
+	printf("\n");
+	fflush(stdout);
+
+	free(datetime);
+	free(uptime);
+	free(ram);
+	free(storage);
+	if (connection) {
+		free(mpd);
+		free(mpd_short);
+	}
+}
+
+static void
+parse_click_event(const char *buffer, size_t length)
+{
+	yajl_status status = yajl_parse(yajl_parser, CUC(buffer), length);
+}
+
+static void
+handle_click_event(ClickEvent event)
+{
+	use_fuzzytime = (use_fuzzytime)? false : true;
+
+	print_status();
 }
 
 int
 main(void)
 {
-	char *kernel = NULL, *user = NULL, *datetime, *uptime, *ram, *storage, *mpd = NULL, *mpd_short = NULL;
-	struct mpd_connection *connection;
-	yajl_gen yajl;
-	const unsigned char *yajl_output;
-	size_t yajl_output_len;
-
 	int timer = timerfd_create(CLOCK_MONOTONIC, 0);
 	uint64_t timerret;
 	if (timer == -1) {
@@ -402,8 +615,23 @@ main(void)
 	}
 
 	struct pollfd fds[] = {
+		{ .fd = STDIN_FILENO, .events = POLLIN },
 		{ .fd = timer, .events = POLLIN }
 	};
+
+	yajl_callbacks callbacks = {
+		.yajl_integer = stdin_integer,
+		.yajl_string = stdin_string,
+		.yajl_start_map = stdin_start_map,
+		.yajl_map_key = stdin_map_key,
+		.yajl_end_map = stdin_end_map
+	};
+
+	yajl_parser = yajl_alloc(&callbacks, NULL, &yajl_parser_context);
+	yajl_generator = yajl_gen_alloc(NULL);
+	if (!yajl_generator || !yajl_parser) {
+		goto cleanup;
+	}
 
 	user = get_user();
 	if (user == NULL) {
@@ -414,59 +642,28 @@ main(void)
 		goto cleanup;
 	}
 
-	yajl = print_setup();
-	if (yajl == NULL) {
+	print_setup();
+	if (yajl_generator == NULL) {
 		goto cleanup;
 	}
 	connection = mpd_connect();
 
 	for (;;) {
-		poll(fds, 1, -1);
-		if (fds[0].revents & POLLIN) {
+		poll(fds, 2, -1);
+
+		if (fds[1].revents & POLLIN) {
 			/* Discard timer data */
-			(void)read(fds[0].fd, &timerret, sizeof(timerret));
+			(void)read(fds[1].fd, &timerret, sizeof(timerret));
 
-			datetime = get_datetime();
-			uptime = get_uptime();
-			ram = get_ram_usage();
-			storage = get_free_storage();
-			if (connection) {
-				mpd = get_mpd(connection, false);
-				mpd_short = get_mpd(connection, true);
-			}
+			print_status();
 
-			yajl_gen_array_open(yajl);
-			if (mpd) {
-				print_record(yajl, "mpd", "MPD", NULL, "#b72f62", true);
-				print_record(yajl, "mpd", mpd, mpd_short, NULL, true);
-			}
-			print_record(yajl, "hd", "HD", NULL, "#7996a9", false);
-			print_record(yajl, "hd", storage, NULL, NULL, true);
-			print_record(yajl, "ram", "Ram", NULL, "#7996a9", false);
-			print_record(yajl, "ram", ram, NULL, NULL, true);
-			print_record(yajl, "uptime", "Up", NULL, "#b492b6", false);
-			print_record(yajl, "uptime", uptime, NULL, NULL, true);
-			print_record(yajl, "os", "Arch", NULL, "#b72f62", false);
-			print_record(yajl, "os", kernel, NULL, false, true);
-			print_record(yajl, "user", user, NULL, "#b492b6", true);
-			print_record(yajl, "datetime", datetime, NULL, "#ffebeb", false);
-			yajl_gen_array_close(yajl);
+		}
+		if (fds[0].revents & POLLIN) {
+			size_t ret = 0;
+			char buf[256];
 
-			yajl_gen_get_buf(yajl, &yajl_output, &yajl_output_len);
-			fwrite(yajl_output, 1, yajl_output_len, stdout);
-			yajl_gen_clear(yajl);
-
-			printf("\n");
-			fflush(stdout);
-
-			free(datetime);
-			free(uptime);
-			free(ram);
-			free(storage);
-			if (connection) {
-				free(mpd);
-				free(mpd_short);
-			}
+			ret = read(fds[0].fd, buf, 256);
+			parse_click_event(buf, ret);
 		}
 	}
 
@@ -475,6 +672,8 @@ main(void)
 cleanup:
 	free(user);
 	free(kernel);
+	yajl_free(yajl_parser);
+	yajl_gen_free(yajl_generator);
 
 	return 0;
 }

@@ -29,7 +29,7 @@ Ideas
 
 Some  ideas I may implement at some point.
 
-- show precise time when clicking on bar
+- extend `click_event` handling
 
 License
 -------
