@@ -42,10 +42,13 @@ clock_get_hour_name(int hour)
 		"twelve"
 	};
 
-	if (hour >= 0 && hour < 12) {
-		return strdup(hournames[hour]);
+	if (hour == 0) {
+		return strdup(hournames[11]);
 	}
-	else if (hour >= 13 && hour <= 23) {
+	else if (hour > 0 && hour <= 12) {
+		return strdup(hournames[hour-1]);
+	}
+	else if (hour > 12 && hour <= 23) {
 		return strdup(hournames[hour-13]);
 	}
 	else {
