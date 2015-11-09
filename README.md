@@ -1,6 +1,8 @@
 sysstat
 =======
 
+![Screenshot](sysstat-example.png)
+
 This little program provides system status using the [i3bar
 protocol][i3bar]. I wrote it to get rid of conky. This also includes a
 fuzzy clock.
@@ -8,14 +10,13 @@ fuzzy clock.
 Building/Installation
 ---------------------
 
-Before bulding keep in mind that this program is intended for my
+Before building keep in mind that this program is intended for my
 personal need and thus might require some tweaks in the source code to
 fit _your_ needs. Simply build `sysstat` with:
 
 ```bash
 $ make
 ```
-
 Dependencies
 ------------
 
