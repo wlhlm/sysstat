@@ -11,7 +11,7 @@ Building/Installation
 ---------------------
 
 Before building keep in mind that this program is intended for my
-personal need and thus might require some tweaks in the source code to
+personal needs and thus might require some tweaks in the source code to
 fit _your_ needs. Simply build `sysstat` with:
 
 ```bash
