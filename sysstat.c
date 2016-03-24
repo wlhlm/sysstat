@@ -23,6 +23,8 @@
 
 /* Refresh interval in seconds */
 const unsigned int refresh = 5;
+const char *mpd_host = "/home/helm/Music/.mpd/socket";
+const unsigned int mpd_port = 0; /* Unnecessary when used with UNIX socket. */
 
 #define CUC(var) (const unsigned char *)var
 
@@ -64,7 +66,9 @@ static int stdin_end_map(void *context);
 static inline int round_float_to_int(float f);
 static char *size_to_human_readable(double n);
 static char *get_kernel_string(void);
+static struct passwd *get_passwd(void);
 static char *get_user(void);
+static char *get_user_home(void);
 static char *get_ram_usage(void);
 static char *get_datetime(bool fuzzy);
 static char *get_disk_free(const char *mount);
@@ -212,19 +216,37 @@ get_kernel_string(void)
 	return strdup(u.release);
 }
 
+static struct passwd *
+get_passwd(void)
+{
+	uid_t uid;
+
+	uid = geteuid();
+	return getpwuid(uid);
+}
+
 static char *
 get_user(void)
 {
-	uid_t uid;
 	struct passwd *pw;
 
-	uid = geteuid();
-	pw = getpwuid(uid);
-	if (pw == NULL) {
+	if (!(pw = get_passwd())) {
 		return NULL;
 	}
 
 	return strdup(pw->pw_name);
+}
+
+static char *
+get_user_home(void)
+{
+	struct passwd *pw;
+
+	if (!(pw = get_passwd())) {
+		return NULL;
+	}
+
+	return strdup(pw->pw_dir);
 }
 
 static char *
@@ -297,14 +319,13 @@ get_datetime(bool fuzzy)
 			return NULL;
 		}
 		if (!strftime(secondarytimestring, sizeof(datestring), "%H:%M", now)) {
-			printf("foo\n");
 			free(secondarytimestring);
 			return NULL;
 		}
 	}
 
 
-	size_t len = strnlen(datestring, sizeof(datestring)-1 + strlen(secondarytimestring) + strlen(" ") + 1;
+	size_t len = strnlen(datestring, sizeof(datestring)-1) + strlen(secondarytimestring) + strlen(" ") + 1;
 	timestring = malloc(len);
 	if(!timestring) {
 		free(secondarytimestring);
@@ -370,7 +391,7 @@ get_uptime(void)
 static struct mpd_connection *
 mpd_connect(void)
 {
-	struct mpd_connection *connection = mpd_connection_new("/home/helm/Music/.mpd/socket", 0, 0);
+	struct mpd_connection *connection = mpd_connection_new(mpd_host, mpd_port, 0);
 	if (connection == NULL) {
 		return NULL;
 	}
@@ -479,10 +500,17 @@ static char *
 get_free_storage(void)
 {
 	char *freestring;
+	char *home_directory;
 	char *home, *root;
 
-	home = get_disk_free("/home/helm");
+	home_directory = get_user_home();
+	if (home_directory == NULL) {
+		return NULL;
+	}
+
+	home = get_disk_free(home_directory);
 	if (home == NULL) {
+		free(home_directory);
 		return NULL;
 	}
 	root = get_disk_free("/");
@@ -495,6 +523,7 @@ get_free_storage(void)
 		snprintf(freestring, 64, "~/:%s /:%s", home, root);
 	}
 
+	free(home_directory);
 	free(home);
 	free(root);
 	return freestring;
@@ -665,7 +694,7 @@ main(void)
 			char input_event_buf[256];
 
 			ret = read(fds[0].fd, input_event_buf, sizeof(input_event_buf));
-			parse_click_event(buf, ret);
+			parse_click_event(input_event_buf, ret);
 		}
 	}
 
