@@ -537,11 +537,12 @@ print_setup(void)
 static void
 print_status(void)
 {
-	char *datetime, *uptime, *ram, *storage, *mpd = NULL, *mpd_short = NULL;
+	char *datetime, *datetime_fuzzy, *uptime, *ram, *storage, *mpd = NULL, *mpd_short = NULL;
 	const unsigned char *yajl_output;
 	size_t yajl_output_len;
 
-	datetime = get_datetime(use_fuzzytime);
+	datetime_fuzzy = get_datetime(use_fuzzytime);
+	datetime = get_datetime(false);
 	uptime = get_uptime();
 	ram = get_ram_usage();
 	storage = get_free_storage();
@@ -552,7 +553,7 @@ print_status(void)
 
 	yajl_gen_array_open(yajl_generator);
 	if (mpd) {
-		print_record(yajl_generator, "mpd", "MPD", NULL, "#b72f62", true);
+		print_record(yajl_generator, "mpd", "MPD", NULL, "#b72f62", false);
 		print_record(yajl_generator, "mpd", mpd, mpd_short, NULL, true);
 	}
 	print_record(yajl_generator, "hd", "HD", NULL, "#7996a9", false);
@@ -564,7 +565,7 @@ print_status(void)
 	print_record(yajl_generator, "os", "Arch", NULL, "#b72f62", false);
 	print_record(yajl_generator, "os", kernel, NULL, false, true);
 	print_record(yajl_generator, "user", user, NULL, "#b492b6", true);
-	print_record(yajl_generator, "datetime", datetime, NULL, "#ffebeb", false);
+	print_record(yajl_generator, "datetime", datetime_fuzzy, datetime, "#ffebeb", false);
 	yajl_gen_array_close(yajl_generator);
 
 	yajl_gen_get_buf(yajl_generator, &yajl_output, &yajl_output_len);
@@ -652,8 +653,8 @@ main(void)
 		poll(fds, 2, -1);
 
 		if (fds[1].revents & POLLIN) {
-			/* Discard timer data */
-			(void)read(fds[1].fd, &timerret, sizeof(timerret));
+			/* Discard timer data, compiler still complains :( */
+			(void) read(fds[1].fd, &timerret, sizeof(timerret));
 
 			print_status();
 
