@@ -197,7 +197,7 @@ size_to_human_readable(double n)
 	else {
 		snprintf(buf, sizeof(buf), "%.2f%c", n, postfixes[i]);
 	}
-	return strndup(buf, 16);
+	return strndup(buf, sizeof(buf)-1);
 }
 
 static char *
@@ -241,7 +241,7 @@ get_ram_usage(void)
 	}
 
 	while (!feof(meminfo)) {
-		if (fgets(buf, 255, meminfo) == NULL) {
+		if (fgets(buf, sizeof(buf), meminfo) == NULL) {
 			break;
 		}
 
@@ -283,7 +283,7 @@ get_datetime(bool fuzzy)
 
 	t = time(NULL);
 	now = localtime(&t);
-	if (!strftime(datestring, 32, "%d-%b", now)) {
+	if (!strftime(datestring, sizeof(datestring), "%d-%b", now)) {
 		return NULL;
 	}
 
@@ -293,10 +293,10 @@ get_datetime(bool fuzzy)
 		}
 	}
 	else {
-		if (!(secondarytimestring = calloc(32, sizeof(*secondarytimestring)))) {
+		if (!(secondarytimestring = calloc(sizeof(datestring), sizeof(*secondarytimestring)))) {
 			return NULL;
 		}
-		if (!strftime(secondarytimestring, 32, "%H:%M", now)) {
+		if (!strftime(secondarytimestring, sizeof(datestring), "%H:%M", now)) {
 			printf("foo\n");
 			free(secondarytimestring);
 			return NULL;
@@ -304,7 +304,7 @@ get_datetime(bool fuzzy)
 	}
 
 
-	size_t len = strlen(datestring) + strlen(secondarytimestring) + strlen(" ") + 1;
+	size_t len = strnlen(datestring, sizeof(datestring)-1 + strlen(secondarytimestring) + strlen(" ") + 1;
 	timestring = malloc(len);
 	if(!timestring) {
 		free(secondarytimestring);
@@ -336,7 +336,7 @@ get_uptime(void)
 {
 	struct sysinfo s;
 	long uptime;
-	unsigned long days, hours, minutes;
+	unsigned long days = 0, hours = 0, minutes = 0;
 	char *timestring;
 
 	timestring = malloc(64);
@@ -457,6 +457,7 @@ get_mpd(struct mpd_connection *connection, bool shorttext)
 		return NULL;
 	}
 
+	/* 5 = " 100%" */
 	mpd_size = strlen(song) + 5 + 1;
 	mpd = malloc(mpd_size);
 	if (mpd == NULL) {
@@ -661,9 +662,9 @@ main(void)
 		}
 		if (fds[0].revents & POLLIN) {
 			size_t ret = 0;
-			char buf[256];
+			char input_event_buf[256];
 
-			ret = read(fds[0].fd, buf, 256);
+			ret = read(fds[0].fd, input_event_buf, sizeof(input_event_buf));
 			parse_click_event(buf, ret);
 		}
 	}
