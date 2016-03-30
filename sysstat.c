@@ -18,6 +18,8 @@
 #include <string.h>
 #include <time.h>
 #include <poll.h>
+#include <errno.h>
+#include <signal.h>
 
 #include "fuzzyclock.h"
 
@@ -50,8 +52,9 @@ typedef struct {
 	ClickEvent event;
 } ParserContext;
 
-char *kernel;
-char *user;
+char *progname;
+char *kernel = NULL;
+char *user = NULL;
 bool use_fuzzytime = true;
 struct mpd_connection *connection;
 yajl_handle yajl_parser;
@@ -83,6 +86,7 @@ static void print_setup(void);
 static void print_status(void);
 static void parse_click_event(const char *buffer, size_t length);
 static void handle_click_event(ClickEvent event);
+static inline int err(const char *errmsg);
 
 static int
 stdin_start_map(void *context)
@@ -253,7 +257,7 @@ static char *
 get_ram_usage(void)
 {
 	unsigned long long reclaimable, total, free, buffers, cached, shmem;
-	unsigned long long usage;
+	unsigned long long usage = 0;
 	FILE *meminfo;
 	char buf[256];
 
@@ -464,25 +468,25 @@ static char *
 get_mpd(struct mpd_connection *connection, bool shorttext)
 {
 	int progress;
-	char *song;
-	char *mpd;
+	char *song = NULL;
+	char *mpd = NULL;
 	size_t mpd_size;
 
 	progress = round_float_to_int(mpd_get_progress(connection) * 100.0f);
 	if (progress < 0) {
-		return NULL;
+		goto cleanup;
 	}
 
 	song = mpd_get_song(connection, shorttext);
 	if (song == NULL) {
-		return NULL;
+		goto cleanup;
 	}
 
 	/* 5 = " 100%" */
 	mpd_size = strlen(song) + 5 + 1;
 	mpd = malloc(mpd_size);
 	if (mpd == NULL) {
-		return NULL;
+		goto cleanup;
 	}
 
 	if (shorttext) {
@@ -492,6 +496,7 @@ get_mpd(struct mpd_connection *connection, bool shorttext)
 		snprintf(mpd, mpd_size, "%s %d%%", song, progress);
 	}
 
+cleanup:
 	free(song);
 	return mpd;
 }
@@ -499,23 +504,22 @@ get_mpd(struct mpd_connection *connection, bool shorttext)
 static char *
 get_free_storage(void)
 {
-	char *freestring;
-	char *home_directory;
-	char *home, *root;
+	char *freestring = NULL;
+	char *home_directory = NULL;
+	char *home = NULL, *root = NULL;
 
 	home_directory = get_user_home();
 	if (home_directory == NULL) {
-		return NULL;
+		goto cleanup;
 	}
 
 	home = get_disk_free(home_directory);
 	if (home == NULL) {
-		free(home_directory);
-		return NULL;
+		goto cleanup;
 	}
 	root = get_disk_free("/");
 	if (root == NULL) {
-		return NULL;
+		goto cleanup;
 	}
 
 	freestring = malloc(64);
@@ -523,6 +527,7 @@ get_free_storage(void)
 		snprintf(freestring, 64, "~/:%s /:%s", home, root);
 	}
 
+cleanup:
 	free(home_directory);
 	free(home);
 	free(root);
@@ -586,33 +591,39 @@ print_status(void)
 		print_record(yajl_generator, "mpd", "MPD", NULL, "#b72f62", false);
 		print_record(yajl_generator, "mpd", mpd, mpd_short, NULL, true);
 	}
-	print_record(yajl_generator, "hd", "HD", NULL, "#7996a9", false);
-	print_record(yajl_generator, "hd", storage, NULL, NULL, true);
-	print_record(yajl_generator, "ram", "Ram", NULL, "#7996a9", false);
-	print_record(yajl_generator, "ram", ram, NULL, NULL, true);
-	print_record(yajl_generator, "uptime", "Up", NULL, "#b492b6", false);
-	print_record(yajl_generator, "uptime", uptime, NULL, NULL, true);
+	if (storage) {
+		print_record(yajl_generator, "hd", "HD", NULL, "#7996a9", false);
+		print_record(yajl_generator, "hd", storage, NULL, NULL, true);
+	}
+	if (ram) {
+		print_record(yajl_generator, "ram", "Ram", NULL, "#7996a9", false);
+		print_record(yajl_generator, "ram", ram, NULL, NULL, true);
+	}
+	if (uptime) {
+		print_record(yajl_generator, "uptime", "Up", NULL, "#b492b6", false);
+		print_record(yajl_generator, "uptime", uptime, NULL, NULL, true);
+	}
 	print_record(yajl_generator, "os", "Arch", NULL, "#b72f62", false);
 	print_record(yajl_generator, "os", kernel, NULL, false, true);
 	print_record(yajl_generator, "user", user, NULL, "#b492b6", true);
-	print_record(yajl_generator, "datetime", datetime_fuzzy, datetime, "#ffebeb", false);
+	if (datetime_fuzzy && datetime) {
+		print_record(yajl_generator, "datetime", datetime_fuzzy, datetime, "#ffebeb", false);
+	}
 	yajl_gen_array_close(yajl_generator);
 
 	yajl_gen_get_buf(yajl_generator, &yajl_output, &yajl_output_len);
 	fwrite(yajl_output, 1, yajl_output_len, stdout);
 	yajl_gen_clear(yajl_generator);
 
-	printf("\n");
+	puts("\n");
 	fflush(stdout);
 
 	free(datetime);
 	free(uptime);
 	free(ram);
 	free(storage);
-	if (connection) {
-		free(mpd);
-		free(mpd_short);
-	}
+	free(mpd);
+	free(mpd_short);
 }
 
 static void
@@ -629,14 +640,32 @@ handle_click_event(ClickEvent event)
 	print_status();
 }
 
-int
-main(void)
+static inline int
+err(const char *errmsg)
 {
-	int timer = timerfd_create(CLOCK_MONOTONIC, 0);
-	uint64_t timerret;
+	return fprintf(stderr, errmsg, progname, strerror(errno));
+}
 
+int
+main(int argc, char *argv[])
+{
+	int ret = 0;
+	int timer = -1;
+	struct sigaction sa;
+
+	progname = argv[0];
+
+	sa.sa_handler = SIG_IGN;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGPIPE, &sa, NULL) == -1) {
+		err("%s: failed to install signal handler: %s\n");
+		goto cleanup_fail;
+	}
+
+	timer = timerfd_create(CLOCK_MONOTONIC, 0);
 	if (timer == -1) {
-		goto cleanup;
+		err("%s: failed to create timerfd: %s\n");
+		goto cleanup_fail;
 	}
 	if (timerfd_settime(timer, 0,
 		        &((struct itimerspec) {
@@ -644,7 +673,8 @@ main(void)
 			        /* Workaround to have the timer immediately trigger on start */
 			        .it_value = ((struct timespec) {.tv_nsec = 1})
 		        }), NULL) == -1) {
-		goto cleanup;
+		err("%s: failed to start timerfd: %s\n");
+		goto cleanup_fail;
 	}
 
 	struct pollfd fds[] = {
@@ -663,50 +693,69 @@ main(void)
 	yajl_parser = yajl_alloc(&callbacks, NULL, &yajl_parser_context);
 	yajl_generator = yajl_gen_alloc(NULL);
 	if (!yajl_generator || !yajl_parser) {
-		goto cleanup;
+		err("%s: failed to allocate JSON parser: %s\n");
+		goto cleanup_fail;
 	}
 
 	user = get_user();
 	if (user == NULL) {
-		goto cleanup;
+		err("%s: failed to get user information: %s\n");
+		goto cleanup_fail;
 	}
 	kernel = get_kernel_string();
 	if (kernel == NULL) {
-		goto cleanup;
+		err("%s: failed to get kernel information: %s\n");
+		goto cleanup_fail;
 	}
 
 	print_setup();
-	if (yajl_generator == NULL) {
-		goto cleanup;
-	}
 	connection = mpd_connect();
+	if (connection == NULL) {
+		err("%s: failed to connect to mpd\n");
+		goto cleanup_fail;
+	}
 
 	for (;;) {
-		poll(fds, 2, -1);
+		if (poll(fds, 2, -1) == -1) {
+			err("%s: failed waiting in poll(): %s\n");
+			goto cleanup_fail;
+		}
 
+		/* timerfd fired */
 		if (fds[1].revents & POLLIN) {
+			uint64_t timerret;
+
 			/* Discard timer data, compiler still complains :( */
 			(void) read(fds[1].fd, &timerret, sizeof(timerret));
 
 			print_status();
 
 		}
+		/* We got something on stdin */
 		if (fds[0].revents & POLLIN) {
-			size_t ret = 0;
+			ssize_t input_length;
 			char input_event_buf[256];
 
-			ret = read(fds[0].fd, input_event_buf, sizeof(input_event_buf));
-			parse_click_event(input_event_buf, ret);
+			input_length = read(fds[0].fd, input_event_buf, sizeof(input_event_buf));
+			if (input_length == -1) {
+				err("%s: failed to read input event: %s");
+				goto cleanup_fail;
+			}
+			parse_click_event(input_event_buf, input_length);
 		}
 	}
 
-	mpd_connection_free(connection);
+	goto cleanup;
 
+cleanup_fail:
+	ret = 1;
 cleanup:
+	close(timer);
 	free(user);
 	free(kernel);
+	mpd_connection_free(connection);
 	yajl_free(yajl_parser);
 	yajl_gen_free(yajl_generator);
 
-	return 0;
+	return ret;
 }
