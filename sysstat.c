@@ -150,13 +150,13 @@ stdin_integer(void *context, long long number)
 	ParserContext *ctx = context;
 
 	if (ctx->last_key == EVENT_X) {
-		ctx->event.x = (uint32_t)number;
+		ctx->event.x = (uint32_t) number;
 	}
 	else if (ctx->last_key == EVENT_Y) {
-		ctx->event.y = (uint32_t)number;
+		ctx->event.y = (uint32_t) number;
 	}
 	else if (ctx->last_key == EVENT_BUTTON) {
-		ctx->event.button = (uint32_t)number;
+		ctx->event.button = (uint32_t) number;
 	}
 
 	return 1;
@@ -196,7 +196,7 @@ size_to_human_readable(double n)
 	}
 
 	if (i == 0) {
-		snprintf(buf, sizeof(buf), "%lu", (unsigned long)n);
+		snprintf(buf, sizeof(buf), "%lu", (unsigned long) n);
 	}
 	else {
 		snprintf(buf, sizeof(buf), "%.2f%c", n, postfixes[i]);
@@ -624,7 +624,7 @@ parse_click_event(const char *buffer, size_t length)
 static void
 handle_click_event(ClickEvent event)
 {
-	use_fuzzytime = (use_fuzzytime)? false : true;
+	use_fuzzytime = !use_fuzzytime;
 
 	print_status();
 }
@@ -634,14 +634,16 @@ main(void)
 {
 	int timer = timerfd_create(CLOCK_MONOTONIC, 0);
 	uint64_t timerret;
+
 	if (timer == -1) {
 		goto cleanup;
 	}
-	if (timerfd_settime(timer, 0, &((struct itimerspec) {
-	                    .it_interval = ((struct timespec) {.tv_sec = refresh}),
-	                    /* Workaround to have the timer immediately trigger on start */
-	                    .it_value = ((struct timespec) {.tv_nsec = 1})
-	                    }), NULL) == -1) {
+	if (timerfd_settime(timer, 0,
+		        &((struct itimerspec) {
+			        .it_interval = ((struct timespec) {.tv_sec = refresh}),
+			        /* Workaround to have the timer immediately trigger on start */
+			        .it_value = ((struct timespec) {.tv_nsec = 1})
+		        }), NULL) == -1) {
 		goto cleanup;
 	}
 
