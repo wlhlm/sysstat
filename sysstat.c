@@ -27,6 +27,7 @@
 const unsigned int refresh = 5;
 const char *mpd_host = "/home/helm/Music/.mpd/socket";
 const unsigned int mpd_port = 0; /* Unnecessary when used with UNIX socket. */
+const unsigned int mpd_timeout = 0;
 
 #define CUC(var) (const unsigned char *)var
 
@@ -76,7 +77,7 @@ static char *get_ram_usage(void);
 static char *get_datetime(bool fuzzy);
 static char *get_disk_free(const char *mount);
 static char *get_uptime(void);
-static struct mpd_connection *mpd_connect(void);
+static struct mpd_connection *mpd_connect(const char *host, unsigned int port, unsigned int timeout);
 static float mpd_get_progress(struct mpd_connection *connection);
 static char *mpd_get_song(struct mpd_connection *connection, bool shorttext);
 static char *get_mpd(struct mpd_connection *connection, bool shorttext);
@@ -393,9 +394,9 @@ get_uptime(void)
 }
 
 static struct mpd_connection *
-mpd_connect(void)
+mpd_connect(const char *host, unsigned int port, unsigned int timeout)
 {
-	struct mpd_connection *connection = mpd_connection_new(mpd_host, mpd_port, 0);
+	struct mpd_connection *connection = mpd_connection_new(host, port, timeout);
 	if (connection == NULL) {
 		return NULL;
 	}
@@ -709,7 +710,7 @@ main(int argc, char *argv[])
 	}
 
 	print_setup();
-	connection = mpd_connect();
+	connection = mpd_connect(mpd_host, mpd_port, mpd_timeout);
 	if (connection == NULL) {
 		err("%s: failed to connect to mpd\n");
 		goto cleanup_fail;
