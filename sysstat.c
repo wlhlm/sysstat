@@ -484,7 +484,7 @@ get_mpd(struct mpd_connection *connection, bool shorttext)
 	}
 
 	/* 5 = " 100%" */
-	mpd_size = strlen(song) + 5 + 1;
+	mpd_size = strnlen(song, 255) + 5 + 1;
 	mpd = malloc(mpd_size);
 	if (mpd == NULL) {
 		goto cleanup;
@@ -510,21 +510,21 @@ get_free_storage(void)
 	char *home = NULL, *root = NULL;
 
 	home_directory = get_user_home();
-	if (home_directory == NULL) {
+	if (!home_directory) {
 		goto cleanup;
 	}
 
 	home = get_disk_free(home_directory);
-	if (home == NULL) {
+	if (!home) {
 		goto cleanup;
 	}
 	root = get_disk_free("/");
-	if (root == NULL) {
+	if (!root) {
 		goto cleanup;
 	}
 
 	freestring = malloc(64);
-	if (freestring != NULL) {
+	if (freestring) {
 		snprintf(freestring, 64, "~/:%s /:%s", home, root);
 	}
 
@@ -549,7 +549,7 @@ print_record(yajl_gen yajl, const char *name, const char *record, const char *sh
 		yajl_gen_string(yajl, CUC("short_text"), strlen("short_text"));
 		yajl_gen_string(yajl, CUC(shortrecord), strlen(shortrecord));
 	}
-	if (color != NULL) {
+	if (color) {
 		yajl_gen_string(yajl, CUC("color"), strlen("color"));
 		yajl_gen_string(yajl, CUC(color), strlen(color));
 	}
@@ -589,8 +589,8 @@ print_status(void)
 
 	yajl_gen_array_open(yajl_generator);
 	if (mpd) {
-		print_record(yajl_generator, "mpd", "MPD", NULL, "#b72f62", false);
-		print_record(yajl_generator, "mpd", mpd, mpd_short, NULL, true);
+		print_record(yajl_generator, "music", "MPD", NULL, "#b72f62", false);
+		print_record(yajl_generator, "music", mpd, mpd_short, NULL, true);
 	}
 	if (storage) {
 		print_record(yajl_generator, "hd", "HD", NULL, "#7996a9", false);
@@ -616,7 +616,7 @@ print_status(void)
 	fwrite(yajl_output, 1, yajl_output_len, stdout);
 	yajl_gen_clear(yajl_generator);
 
-	puts("\n");
+	putchar('\n');
 	fflush(stdout);
 
 	free(datetime);
@@ -709,13 +709,13 @@ main(int argc, char *argv[])
 		goto cleanup_fail;
 	}
 
-	print_setup();
 	connection = mpd_connect(mpd_host, mpd_port, mpd_timeout);
 	if (connection == NULL) {
 		err("%s: failed to connect to mpd\n");
 		goto cleanup_fail;
 	}
 
+	print_setup();
 	for (;;) {
 		if (poll(fds, 2, -1) == -1) {
 			err("%s: failed waiting in poll(): %s\n");
