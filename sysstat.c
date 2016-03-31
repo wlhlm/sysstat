@@ -82,7 +82,7 @@ static float mpd_get_progress(struct mpd_connection *connection);
 static char *mpd_get_song(struct mpd_connection *connection, bool shorttext);
 static char *get_mpd(struct mpd_connection *connection, bool shorttext);
 static char *get_free_storage(void);
-static void print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool separator);
+static void print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool markup, bool separator);
 static void print_setup(void);
 static void print_status(void);
 static void parse_click_event(const char *buffer, size_t length);
@@ -536,7 +536,7 @@ cleanup:
 }
 
 static void
-print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool separator)
+print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool markup, bool separator)
 {
 	if (!record) return;
 
@@ -552,6 +552,10 @@ print_record(yajl_gen yajl, const char *name, const char *record, const char *sh
 	if (color) {
 		yajl_gen_string(yajl, CUC("color"), strlen("color"));
 		yajl_gen_string(yajl, CUC(color), strlen(color));
+	}
+	if (markup) {
+		yajl_gen_string(yajl, CUC("markup"), strlen("markup"));
+		yajl_gen_string(yajl, CUC("pango"), strlen("pango"));
 	}
 	yajl_gen_string(yajl, CUC("separator"), strlen("separator"));
 	yajl_gen_bool(yajl, separator);
@@ -589,26 +593,26 @@ print_status(void)
 
 	yajl_gen_array_open(yajl_generator);
 	if (mpd) {
-		print_record(yajl_generator, "music", "MPD", NULL, "#b72f62", false);
-		print_record(yajl_generator, "music", mpd, mpd_short, NULL, true);
+		print_record(yajl_generator, "music", "<b>MPD</b>", NULL, "#b72f62", true,  false);
+		print_record(yajl_generator, "music", mpd, mpd_short, NULL, false, true);
 	}
 	if (storage) {
-		print_record(yajl_generator, "hd", "HD", NULL, "#7996a9", false);
-		print_record(yajl_generator, "hd", storage, NULL, NULL, true);
+		print_record(yajl_generator, "hd", "<b>HD</b>", NULL, "#7996a9", true, false);
+		print_record(yajl_generator, "hd", storage, NULL, NULL, false, true);
 	}
 	if (ram) {
-		print_record(yajl_generator, "ram", "Ram", NULL, "#7996a9", false);
-		print_record(yajl_generator, "ram", ram, NULL, NULL, true);
+		print_record(yajl_generator, "ram", "<b>Ram</b>", NULL, "#7996a9", true, false);
+		print_record(yajl_generator, "ram", ram, NULL, NULL, false, true);
 	}
 	if (uptime) {
-		print_record(yajl_generator, "uptime", "Up", NULL, "#b492b6", false);
-		print_record(yajl_generator, "uptime", uptime, NULL, NULL, true);
+		print_record(yajl_generator, "uptime", "<b>Up</b>", NULL, "#b492b6", true, false);
+		print_record(yajl_generator, "uptime", uptime, NULL, NULL, false, true);
 	}
-	print_record(yajl_generator, "os", "Arch", NULL, "#b72f62", false);
-	print_record(yajl_generator, "os", kernel, NULL, false, true);
-	print_record(yajl_generator, "user", user, NULL, "#b492b6", true);
+	print_record(yajl_generator, "os", "<b>Arch</b>", NULL, "#b72f62", true, false);
+	print_record(yajl_generator, "os", kernel, NULL, NULL, false, true);
+	print_record(yajl_generator, "user", user, NULL, "#b492b6", false, true);
 	if (datetime_fuzzy && datetime) {
-		print_record(yajl_generator, "datetime", datetime_fuzzy, datetime, "#ffebeb", false);
+		print_record(yajl_generator, "datetime", datetime_fuzzy, datetime, "#ffebeb", true, false);
 	}
 	yajl_gen_array_close(yajl_generator);
 
