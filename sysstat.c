@@ -257,8 +257,7 @@ get_user_home(void)
 static char *
 get_ram_usage(void)
 {
-	unsigned long long reclaimable, total, free, buffers, cached, shmem;
-	unsigned long long usage = 0;
+	unsigned long long total = 0, available = 0, usage = 0;
 	FILE *meminfo;
 	char buf[256];
 
@@ -272,27 +271,15 @@ get_ram_usage(void)
 			break;
 		}
 
-		if (strncmp(buf, "SReclaimable:", 13) == 0) {
-			sscanf(buf, "%*s %llu", &reclaimable);
-		}
-		else if (strncmp(buf, "MemTotal:", 9) == 0) {
+		if (strncmp(buf, "MemTotal:", 9) == 0) {
 			sscanf(buf, "%*s %llu", &total);
 		}
-		else if (strncmp(buf, "MemFree:", 8) == 0) {
-			sscanf(buf, "%*s %llu", &free);
-		}
-		else if (strncmp(buf, "Buffers:", 8) == 0) {
-			sscanf(buf, "%*s %llu", &buffers);
-		}
-		else if (strncmp(buf, "Cached:", 7) == 0) {
-			sscanf(buf, "%*s %llu", &cached);
-		}
-		else if (strncmp(buf, "Shmem:", 6) == 0) {
-			sscanf(buf, "%*s %llu", &shmem);
+		else if (strncmp(buf, "MemAvailable:", 13) == 0) {
+			sscanf(buf, "%*s %llu", &available);
 		}
 	}
 
-	usage = total - free - cached + shmem - buffers - reclaimable;
+	usage = total - available;
 	/* Values in /proc/meminfo are in Kibibyte */
 	usage *= 1024;
 
@@ -620,10 +607,11 @@ print_status(void)
 	fwrite(yajl_output, 1, yajl_output_len, stdout);
 	yajl_gen_clear(yajl_generator);
 
-	putchar('\n');
+	printf("\n");
 	fflush(stdout);
 
 	free(datetime);
+	free(datetime_fuzzy);
 	free(uptime);
 	free(ram);
 	free(storage);
