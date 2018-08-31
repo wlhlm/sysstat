@@ -1,6 +1,8 @@
 /* cc -std=c99 -pedantic -Wall -O2 -D_POSIX_C_SOURCE=200809L */
 #include "fuzzyclock.h"
 
+#define ARR_LEN(var) (sizeof(var)/sizeof((var)[0]))
+
 typedef enum {
 	FULL_PAST = 0,
 	QUARTER_PAST,
@@ -17,11 +19,8 @@ typedef struct {
 static inline int
 clock_increment_hour(int hour)
 {
-	/* Doesn't check for over/underflows, I know... */
-	hour++;
-
-	if (hour > 23) return 0;
-	else return hour;
+	if (hour >= 23) return 0;
+	else return ++hour;
 }
 
 static char *
@@ -97,8 +96,9 @@ fuzzytime(struct tm *tm)
 	struct tm *timeinfo;
 	clock_state_t state;
 	char timestring[64];
+	char *fuzzyhour;
 
-	if (!tm) {
+	if (tm == NULL) {
 		time_t rawtime;
 
 		time(&rawtime);
@@ -113,22 +113,24 @@ fuzzytime(struct tm *tm)
 		.minute = timeinfo->tm_min
 	};
 	state = clock_get_state(&clock);
+	fuzzyhour = clock_get_fuzzy_hour(&clock);
 
 	switch(state) {
 	case QUARTER_PAST:
-		snprintf(timestring, 64, "quarter past %s", clock_get_fuzzy_hour(&clock));
+		snprintf(timestring, ARR_LEN(timestring), "quarter past %s", fuzzyhour);
 		break;
 	case HALF:
-		snprintf(timestring, 64, "half past %s", clock_get_fuzzy_hour(&clock));
+		snprintf(timestring, ARR_LEN(timestring), "half past %s", fuzzyhour);
 		break;
 	case QUARTER_BEFORE:
-		snprintf(timestring, 64, "quarter before %s", clock_get_fuzzy_hour(&clock));
+		snprintf(timestring, ARR_LEN(timestring), "quarter before %s", fuzzyhour);
 		break;
 	case FULL_PAST:
 	case FULL:
-		snprintf(timestring, 64, "%s o'clock", clock_get_fuzzy_hour(&clock));
+		snprintf(timestring, ARR_LEN(timestring), "%s o'clock", fuzzyhour);
 		break;
 	}
 
+	free(fuzzyhour);
 	return strdup(timestring);
 }

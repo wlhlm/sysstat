@@ -2,7 +2,7 @@
 # See LICENSE file for copyright and license details.
 
 # sysstat version
-VERSION = 0.1
+VERSION = 0.2
 
 # Programm name
 NAME = sysstat
@@ -13,7 +13,7 @@ INCS = `pkg-config --cflags --libs ${LIBS}`
 
 # Flags
 CPPFLAGS = -DVERSION=\"${VERSION}\" -DNAME=\"${NAME}\" -D_POSIX_C_SOURCE=200809L
-CFLAGS = -std=c99 -pedantic -Wall -Os ${INCS} ${CPPFLAGS}
+CFLAGS = -std=c99 -pedantic -Wall -Os ${INCS} ${CPPFLAGS} -lm
 
 # Enable debugging symbols
 ifdef DEBUG
@@ -36,8 +36,14 @@ options:
 $(NAME): ${SRC}
 	@${CC} -o ${NAME} ${SRC} ${CFLAGS}
 
+install: all
+	@echo installing executable file to ${DESTDIR}${PREFIX}/bin
+	@mkdir -p ${DESTDIR}${PREFIX}/bin
+	@cp -f ${NAME} ${DESTDIR}${PREFIX}/bin
+	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}
+
 clean:
 	@echo Cleaning
 	@rm -f ${NAME}
 
-.PHONY: all options clean
+.PHONY: all options install clean

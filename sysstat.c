@@ -5,6 +5,7 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/timerfd.h>
+#include <ifaddrs.h>
 
 #include <mpd/client.h>
 #include <yajl/yajl_gen.h>
@@ -20,6 +21,8 @@
 #include <poll.h>
 #include <errno.h>
 #include <signal.h>
+#include <limits.h>
+#include <math.h>
 
 #include "fuzzyclock.h"
 
@@ -28,8 +31,14 @@ const unsigned int refresh = 5;
 const char *mpd_host = "/home/helm/Music/.mpd/socket";
 const unsigned int mpd_port = 0; /* Unnecessary when used with UNIX socket. */
 const unsigned int mpd_timeout = 0;
+const char *wired_interfaces[] = {"enp0s25", NULL};
+const char *wireless_interfaces[] = {"wlp2s0", NULL};
+
+#define BATTERY_PATH "/sys/class/power_supply/BAT0"
+#define AC_PATH "/sys/class/power_supply/AC"
 
 #define CUC(var) (const unsigned char *)var
+#define ARR_LEN(var) (sizeof(var)/sizeof((var)[0]))
 
 typedef enum {
 	EVENT_NAME,
@@ -55,6 +64,7 @@ typedef struct {
 
 char *progname;
 char *kernel = NULL;
+char *hostname = NULL;
 char *user = NULL;
 bool use_fuzzytime = true;
 struct mpd_connection *connection;
@@ -69,19 +79,23 @@ static int stdin_integer(void *context, long long number);
 static int stdin_end_map(void *context);
 static inline int round_float_to_int(float f);
 static char *size_to_human_readable(double n);
-static char *get_kernel_string(void);
+static bool str_in_list(const char *str, const char *list[]);
+static char *get_kernel_version(void);
+static char * get_hostname(void);
 static struct passwd *get_passwd(void);
 static char *get_user(void);
 static char *get_user_home(void);
 static char *get_ram_usage(void);
+static char *get_network_status(void);
 static char *get_datetime(bool fuzzy);
 static char *get_disk_free(const char *mount);
 static char *get_uptime(void);
+static char *get_battery_charge(void);
 static struct mpd_connection *mpd_connect(const char *host, unsigned int port, unsigned int timeout);
 static float mpd_get_progress(struct mpd_connection *connection);
 static char *mpd_get_song(struct mpd_connection *connection, bool shorttext);
 static char *get_mpd(struct mpd_connection *connection, bool shorttext);
-static char *get_free_storage(void);
+static char *get_free_storage(bool check_home);
 static void print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool markup, bool separator);
 static void print_setup(void);
 static void print_status(void);
@@ -188,7 +202,7 @@ round_float_to_int(float f)
 	return (int) f;
 }
 
-/* from sbase: http://tools.suckless.org/sbase */
+/* Based on version from sbase: http://tools.suckless.org/sbase */
 static char *
 size_to_human_readable(double n)
 {
@@ -200,25 +214,62 @@ size_to_human_readable(double n)
 		n /= 1024;
 	}
 
+	n = round(n * 10.0) / 10.0;
+
 	if (i == 0) {
 		snprintf(buf, sizeof(buf), "%lu", (unsigned long) n);
 	}
 	else {
-		snprintf(buf, sizeof(buf), "%.2f%c", n, postfixes[i]);
+		snprintf(buf, sizeof(buf), "%.1f%c", n, postfixes[i]);
 	}
 	return strndup(buf, sizeof(buf)-1);
 }
 
-static char *
-get_kernel_string(void)
+static bool
+str_in_list(const char *str, const char *list[])
 {
+	if (str != NULL && list != NULL) {
+		for (size_t i = 0; list[i] != NULL; i++) {
+			if (strcmp(str, list[i]) == 0) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+static char *
+get_kernel_version(void)
+{
+	char *version_part;
 	struct utsname u;
 
 	if (uname(&u) < 0) {
 		return NULL;
 	}
 
-	return strdup(u.release);
+	/* Extract only version number part and drop suffixes to save space. */
+	version_part = strchr(u.release, '-');
+
+	if (version_part != NULL) {
+		return strndup(u.release, version_part - u.release);
+	}
+	else {
+		return strdup(u.release);
+	}
+}
+
+static char *
+get_hostname(void)
+{
+	char name[HOST_NAME_MAX+1];
+
+	if (gethostname(name, HOST_NAME_MAX) == -1) {
+		return NULL;
+	}
+
+	return strndup(name, HOST_NAME_MAX);
 }
 
 static struct passwd *
@@ -288,6 +339,51 @@ get_ram_usage(void)
 }
 
 static char *
+get_network_status(void)
+{
+	bool wireless_up = false, wired_up = false;
+	char *netstr;
+	struct ifaddrs *interfaces;
+
+	getifaddrs(&interfaces);
+	if (interfaces == NULL) {
+		return NULL;
+	}
+
+	for (struct ifaddrs *interfaces_copy = interfaces; interfaces_copy != NULL; interfaces_copy = interfaces_copy->ifa_next) {
+		/* Skip interfaces without address */
+		if (interfaces_copy->ifa_addr == NULL) {
+			continue;
+		}
+		/* Skip interfaces without IP address */
+		else if (interfaces_copy->ifa_addr->sa_family != AF_INET && interfaces_copy->ifa_addr->sa_family != AF_INET6) {
+			continue;
+		}
+
+		if (!wired_up && str_in_list(interfaces_copy->ifa_name, wired_interfaces)) {
+			wired_up = true;
+		}
+		else if (!wireless_up && str_in_list(interfaces_copy->ifa_name, wireless_interfaces)) {
+			wireless_up = true;
+		}
+
+		if (wired_up && wireless_up) {
+			break;
+		}
+	}
+
+	freeifaddrs(interfaces);
+
+	netstr = (wireless_up) ? ((wired_up) ? "W:E" : "W") : ((wired_up) ? "E" : NULL);
+
+	if (netstr == NULL) {
+		return NULL;
+	}
+
+	return strdup(netstr);
+}
+
+static char *
 get_datetime(bool fuzzy)
 {
 	time_t t;
@@ -297,7 +393,7 @@ get_datetime(bool fuzzy)
 
 	t = time(NULL);
 	now = localtime(&t);
-	if (!strftime(datestring, sizeof(datestring), "%d-%b", now)) {
+	if (!strftime(datestring, ARR_LEN(datestring), "%d-%b", now)) {
 		return NULL;
 	}
 
@@ -307,10 +403,10 @@ get_datetime(bool fuzzy)
 		}
 	}
 	else {
-		if (!(secondarytimestring = calloc(sizeof(datestring), sizeof(*secondarytimestring)))) {
+		if (!(secondarytimestring = calloc(ARR_LEN(datestring), sizeof(*secondarytimestring)))) {
 			return NULL;
 		}
-		if (!strftime(secondarytimestring, sizeof(datestring), "%H:%M", now)) {
+		if (!strftime(secondarytimestring, ARR_LEN(datestring), "%H:%M", now)) {
 			free(secondarytimestring);
 			return NULL;
 		}
@@ -325,6 +421,7 @@ get_datetime(bool fuzzy)
 	}
 	snprintf(timestring, len, "%s %s", datestring, secondarytimestring);
 
+	free(secondarytimestring);
 	return timestring;
 }
 
@@ -358,6 +455,7 @@ get_uptime(void)
 	}
 
 	if (sysinfo(&s) == -1) {
+		free(timestring);
 		return NULL;
 	}
 
@@ -378,6 +476,58 @@ get_uptime(void)
 	}
 
 	return timestring;
+}
+
+static char *
+get_battery_charge(void)
+{
+	unsigned long charge_full, charge_current;
+	unsigned int charge_percentage;
+	int plugged_in = 0;
+	/* 6 = sizeof("+100%") + \'0' */
+	char percentage_string[6];
+	char *ret;
+	FILE *sys_ac, *sys_charge_full, *sys_charge_current;
+
+	sys_charge_full = fopen(BATTERY_PATH "/charge_full", "r");
+	if (sys_charge_full == NULL) {
+		return NULL;
+	}
+
+	sys_charge_current = fopen(BATTERY_PATH "/charge_now", "r");
+	if (sys_charge_current == NULL) {
+		fclose(sys_charge_full);
+		return NULL;
+	}
+
+	sys_ac = fopen(AC_PATH "/online", "r");
+	if (sys_ac != NULL) {
+		fscanf(sys_ac, "%2d", &plugged_in);
+	}
+
+	if (fscanf(sys_charge_full, "%lu", &charge_full) != 1) {
+		ret = NULL;
+		goto cleanup;
+	}
+	if (fscanf(sys_charge_current, "%lu", &charge_current) != 1) {
+		ret = NULL;
+		goto cleanup;
+	}
+
+	charge_percentage = (unsigned int) ((charge_current * 100) / charge_full);
+
+	snprintf(percentage_string, ARR_LEN(percentage_string), (plugged_in == 1) ? "+%u%%" : "%u%%", charge_percentage);
+
+	ret = strdup(percentage_string);
+
+cleanup:
+	fclose(sys_charge_full);
+	fclose(sys_charge_current);
+	if (sys_ac != NULL) {
+		fclose(sys_ac);
+	}
+
+	return ret;
 }
 
 static struct mpd_connection *
@@ -490,21 +640,24 @@ cleanup:
 }
 
 static char *
-get_free_storage(void)
+get_free_storage(bool check_home)
 {
 	char *freestring = NULL;
 	char *home_directory = NULL;
 	char *home = NULL, *root = NULL;
 
-	home_directory = get_user_home();
-	if (!home_directory) {
-		goto cleanup;
+	if (check_home) {
+		home_directory = get_user_home();
+		if (!home_directory) {
+			goto cleanup;
+		}
+
+		home = get_disk_free(home_directory);
+		if (!home) {
+			goto cleanup;
+		}
 	}
 
-	home = get_disk_free(home_directory);
-	if (!home) {
-		goto cleanup;
-	}
 	root = get_disk_free("/");
 	if (!root) {
 		goto cleanup;
@@ -512,7 +665,12 @@ get_free_storage(void)
 
 	freestring = malloc(64);
 	if (freestring) {
-		snprintf(freestring, 64, "~/:%s /:%s", home, root);
+		if (check_home) {
+			snprintf(freestring, 64, "~/:%s /:%s", home, root);
+		}
+		else {
+			snprintf(freestring, 64, "/:%s", root);
+		}
 	}
 
 cleanup:
@@ -564,7 +722,7 @@ print_setup(void)
 static void
 print_status(void)
 {
-	char *datetime, *datetime_fuzzy, *uptime, *ram, *storage, *mpd = NULL, *mpd_short = NULL;
+	char *datetime, *datetime_fuzzy, *uptime, *ram, *storage, *battery_charge, *network_status, *mpd = NULL, *mpd_short = NULL;
 	const unsigned char *yajl_output;
 	size_t yajl_output_len;
 
@@ -572,7 +730,9 @@ print_status(void)
 	datetime = get_datetime(false);
 	uptime = get_uptime();
 	ram = get_ram_usage();
-	storage = get_free_storage();
+	storage = get_free_storage(false);
+	battery_charge = get_battery_charge();
+	network_status = get_network_status();
 	if (connection) {
 		mpd = get_mpd(connection, false);
 		mpd_short = get_mpd(connection, true);
@@ -580,24 +740,39 @@ print_status(void)
 
 	yajl_gen_array_open(yajl_generator);
 	if (mpd) {
-		print_record(yajl_generator, "music", "<b>MPD</b>", NULL, "#b72f62", true,  false);
+		print_record(yajl_generator, "music", "MPD", NULL, "#b72f62", false,  false);
 		print_record(yajl_generator, "music", mpd, mpd_short, NULL, false, true);
 	}
 	if (storage) {
-		print_record(yajl_generator, "hd", "<b>HD</b>", NULL, "#7996a9", true, false);
+		print_record(yajl_generator, "hd", "HD", NULL, "#7996a9", false, false);
 		print_record(yajl_generator, "hd", storage, NULL, NULL, false, true);
 	}
 	if (ram) {
-		print_record(yajl_generator, "ram", "<b>Ram</b>", NULL, "#7996a9", true, false);
+		print_record(yajl_generator, "ram", "Ram", NULL, "#7996a9", false, false);
 		print_record(yajl_generator, "ram", ram, NULL, NULL, false, true);
 	}
+	if (battery_charge) {
+		print_record(yajl_generator, "battery", "Bat", NULL, "#7996a9", false, false);
+		print_record(yajl_generator, "battery", battery_charge, NULL, NULL, false, true);
+	}
+	if (network_status) {
+		print_record(yajl_generator, "network", "Net", NULL, "#7996a9", false, false);
+		print_record(yajl_generator, "network", network_status, NULL, NULL, false, true);
+	}
 	if (uptime) {
-		print_record(yajl_generator, "uptime", "<b>Up</b>", NULL, "#b492b6", true, false);
+		print_record(yajl_generator, "uptime", "Up", NULL, "#b492b6", false, false);
 		print_record(yajl_generator, "uptime", uptime, NULL, NULL, false, true);
 	}
-	print_record(yajl_generator, "os", "<b>Arch</b>", NULL, "#b72f62", true, false);
-	print_record(yajl_generator, "os", kernel, NULL, NULL, false, true);
-	print_record(yajl_generator, "user", user, NULL, "#b492b6", false, true);
+	if (kernel) {
+		print_record(yajl_generator, "os", "Arch", NULL, "#b72f62", false, false);
+		print_record(yajl_generator, "os", kernel, NULL, NULL, false, true);
+	}
+	if (hostname) {
+		print_record(yajl_generator, "host", hostname, NULL, "#b492b6", false, (user == NULL));
+	}
+	if (user) {
+		print_record(yajl_generator, "host", user, NULL, (hostname) ? NULL : "#b492b6", false, true);
+	}
 	if (datetime_fuzzy && datetime) {
 		print_record(yajl_generator, "datetime", datetime_fuzzy, datetime, "#ffebeb", true, false);
 	}
@@ -614,6 +789,8 @@ print_status(void)
 	free(datetime_fuzzy);
 	free(uptime);
 	free(ram);
+	free(battery_charge);
+	free(network_status);
 	free(storage);
 	free(mpd);
 	free(mpd_short);
@@ -642,7 +819,7 @@ err(const char *errmsg)
 int
 main(int argc, char *argv[])
 {
-	int ret = 0;
+	int ret = EXIT_SUCCESS;
 	int timer = -1;
 	struct sigaction sa;
 
@@ -652,7 +829,7 @@ main(int argc, char *argv[])
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGPIPE, &sa, NULL) == -1) {
 		err("%s: failed to install signal handler: %s\n");
-		goto cleanup_fail;
+		return EXIT_FAILURE;
 	}
 
 	timer = timerfd_create(CLOCK_MONOTONIC, 0);
@@ -686,26 +863,24 @@ main(int argc, char *argv[])
 	yajl_parser = yajl_alloc(&callbacks, NULL, &yajl_parser_context);
 	yajl_generator = yajl_gen_alloc(NULL);
 	if (!yajl_generator || !yajl_parser) {
-		err("%s: failed to allocate JSON parser: %s\n");
+		err("%s: failed to allocate JSON parser\n");
 		goto cleanup_fail;
 	}
 
+	kernel = get_kernel_version();
+	if (kernel == NULL) {
+		err("%s: failed to get kernel information: %s\n");
+	}
+	hostname = get_hostname();
+	if (hostname == NULL) {
+		err("%s: failed to get hostname information: %s\n");
+	}
 	user = get_user();
 	if (user == NULL) {
 		err("%s: failed to get user information: %s\n");
-		goto cleanup_fail;
-	}
-	kernel = get_kernel_string();
-	if (kernel == NULL) {
-		err("%s: failed to get kernel information: %s\n");
-		goto cleanup_fail;
 	}
 
 	connection = mpd_connect(mpd_host, mpd_port, mpd_timeout);
-	if (connection == NULL) {
-		err("%s: failed to connect to mpd\n");
-		goto cleanup_fail;
-	}
 
 	print_setup();
 	for (;;) {
@@ -718,7 +893,7 @@ main(int argc, char *argv[])
 		if (fds[1].revents & POLLIN) {
 			uint64_t timerret;
 
-			/* Discard timer data, compiler still complains :( */
+			/* Discard timer data. */
 			(void) read(fds[1].fd, &timerret, sizeof(timerret));
 
 			print_status();
@@ -729,10 +904,10 @@ main(int argc, char *argv[])
 			ssize_t input_length;
 			char input_event_buf[256];
 
-			input_length = read(fds[0].fd, input_event_buf, sizeof(input_event_buf));
+			input_length = read(fds[0].fd, input_event_buf, ARR_LEN(input_event_buf));
 			if (input_length == -1) {
 				err("%s: failed to read input event: %s");
-				goto cleanup_fail;
+				continue;
 			}
 			parse_click_event(input_event_buf, input_length);
 		}
@@ -741,14 +916,21 @@ main(int argc, char *argv[])
 	goto cleanup;
 
 cleanup_fail:
-	ret = 1;
+	ret = EXIT_FAILURE;
 cleanup:
 	close(timer);
-	free(user);
 	free(kernel);
-	mpd_connection_free(connection);
-	yajl_free(yajl_parser);
-	yajl_gen_free(yajl_generator);
+	free(hostname);
+	free(user);
+	if (connection) {
+		mpd_connection_free(connection);
+	}
+	if (yajl_parser) {
+		yajl_free(yajl_parser);
+	}
+	if (yajl_generator) {
+		yajl_gen_free(yajl_generator);
+	}
 
 	return ret;
 }
