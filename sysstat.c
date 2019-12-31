@@ -482,7 +482,7 @@ static char *
 get_battery_charge(void)
 {
 	unsigned long charge_full, charge_current;
-	unsigned int charge_percentage;
+	unsigned int charge_percentage = 0;
 	int plugged_in = 0;
 	/* 6 = sizeof("+100%") + \'0' */
 	char percentage_string[6];
@@ -514,7 +514,9 @@ get_battery_charge(void)
 		goto cleanup;
 	}
 
-	charge_percentage = (unsigned int) ((charge_current * 100) / charge_full);
+	if (charge_full > 0) {
+		charge_percentage = (unsigned int) ((charge_current * 100) / charge_full);
+	}
 
 	snprintf(percentage_string, ARR_LEN(percentage_string), (plugged_in == 1) ? "+%u%%" : "%u%%", charge_percentage);
 
