@@ -97,7 +97,7 @@ static char *mpd_get_song(struct mpd_connection *connection, bool shorttext);
 static char *get_mpd(struct mpd_connection *connection, bool shorttext);
 static char *get_free_storage(bool check_home);
 static void print_record(yajl_gen yajl, const char *name, const char *record, const char *shortrecord, const char *color, bool markup, bool separator);
-static void print_setup(void);
+static void print_header(void);
 static void print_status(void);
 static void parse_click_event(const char *buffer, size_t length);
 static void handle_click_event(ClickEvent event);
@@ -710,7 +710,7 @@ print_record(yajl_gen yajl, const char *name, const char *record, const char *sh
 }
 
 static void
-print_setup(void)
+print_header(void)
 {
 	printf("{\"version\":1,\"click_events\":true}\n");
 	printf("[\n");
@@ -884,7 +884,7 @@ main(int argc, char *argv[])
 
 	connection = mpd_connect(mpd_host, mpd_port, mpd_timeout);
 
-	print_setup();
+	print_header();
 	for (;;) {
 		if (poll(fds, 2, -1) == -1) {
 			err("%s: failed waiting in poll(): %s\n");
