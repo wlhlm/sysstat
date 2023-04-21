@@ -1,6 +1,10 @@
 /* cc -std=c99 -pedantic -Wall -O2 -D_POSIX_C_SOURCE=200809L */
 #include "fuzzyclock.h"
 
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
 #define ARR_LEN(var) (sizeof(var)/sizeof((var)[0]))
 
 typedef enum {
