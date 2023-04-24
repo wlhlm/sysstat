@@ -26,16 +26,7 @@
 
 #include "fuzzyclock.h"
 
-/* Refresh interval in seconds */
-const unsigned int refresh = 5;
-const char *mpd_host = "/home/helm/Music/.mpd/socket";
-const unsigned int mpd_port = 0; /* Unnecessary when used with UNIX socket. */
-const unsigned int mpd_timeout = 0;
-const char *wired_interfaces[] = {"enp0s25", NULL};
-const char *wireless_interfaces[] = {"wlp2s0", NULL};
-
-#define BATTERY_PATH "/sys/class/power_supply/BAT0"
-#define AC_PATH "/sys/class/power_supply/AC"
+#include "config.h"
 
 #define CUC(var) (const unsigned char *)var
 #define ARR_LEN(var) (sizeof(var)/sizeof((var)[0]))

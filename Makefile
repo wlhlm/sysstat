@@ -1,5 +1,6 @@
 # sysstat - simple i3 status bar
 # See LICENSE file for copyright and license details.
+.POSIX:
 
 # sysstat version
 VERSION = 0.2
@@ -33,17 +34,21 @@ options:
 	@echo "CFLAGS   = ${CFLAGS}"
 	@echo "CC       = ${CC}"
 
-$(NAME): ${SRC}
+$(NAME): ${SRC} config.h
 	@${CC} -o ${NAME} ${SRC} ${CFLAGS}
 
 install: all
 	@echo installing executable file to ${DESTDIR}${PREFIX}/bin
-	@mkdir -p ${DESTDIR}${PREFIX}/bin
-	@cp -f ${NAME} ${DESTDIR}${PREFIX}/bin
-	@chmod 755 ${DESTDIR}${PREFIX}/bin/${NAME}
+	@mkdir -p "${DESTDIR}${PREFIX}/bin"
+	@cp -f ${NAME} "${DESTDIR}${PREFIX}/bin"
+	@chmod 755 "${DESTDIR}${PREFIX}/bin/${NAME}"
+
+uninstall:
+	@echo removing executable file from ${DESTDIR}${PREFIX}/bin
+	@rm -f "${DESTDIR}${PREFIX}/bin/${NAME}"
 
 clean:
-	@echo Cleaning
+	@echo Cleaning up
 	@rm -f ${NAME}
 
 .PHONY: all options install clean
