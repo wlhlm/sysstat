@@ -1,3 +1,5 @@
+/* See LICENSE file for license details. */
+
 #ifndef FUZZY_CLOCK_H
 #define FUZZY_CLOCK_H
 

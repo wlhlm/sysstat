@@ -1,4 +1,5 @@
-/* cc -std=c99 -pedantic -Wall -O2 -D_POSIX_C_SOURCE=200809L */
+/* See LICENSE file for license details. */
+
 #include "fuzzyclock.h"
 
 #include <stdio.h>

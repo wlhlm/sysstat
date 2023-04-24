@@ -103,6 +103,7 @@ static void parse_click_event(const char *buffer, size_t length);
 static void handle_click_event(ClickEvent event);
 static inline int err(const char *errmsg);
 
+/* Begin parsing a ClickEvent received on stdin. */
 static int
 stdin_start_map(void *context)
 {
@@ -411,7 +412,6 @@ get_datetime(bool fuzzy)
 			return NULL;
 		}
 	}
-
 
 	size_t len = strnlen(datestring, sizeof(datestring)-1) + strlen(secondarytimestring) + strlen(" ") + 1;
 	timestring = malloc(len);
@@ -824,10 +824,12 @@ main(int argc, char *argv[])
 {
 	int ret = EXIT_SUCCESS;
 	int timer = -1;
-	struct sigaction sa;
 
 	progname = argv[0];
 
+	/* Talking to mpd over a UNIX domain socket, we may receive SIGPIPE which
+	 * would normally terminate the process and we certainly don't want that. */
+	struct sigaction sa;
 	sa.sa_handler = SIG_IGN;
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGPIPE, &sa, NULL) == -1) {
@@ -902,7 +904,7 @@ main(int argc, char *argv[])
 			print_status();
 
 		}
-		/* We got something on stdin */
+		/* We got something on stdin. */
 		if (fds[0].revents & POLLIN) {
 			ssize_t input_length;
 			char input_event_buf[256];

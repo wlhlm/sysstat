@@ -3,16 +3,17 @@ sysstat
 
 ![Screenshot](sysstat-example.png)
 
-This little program provides system status using the [i3bar
-protocol][i3bar]. I wrote it to get rid of conky. This also includes a
-fuzzy clock.
+This little program provides system status using the [i3bar protocol][i3bar]. I
+wrote it as a replacement for a conky config I was previously using. This also
+includes a "fuzzy" clock (toggleable by clicking on the i3bar).
 
 Building/Installation
 ---------------------
 
-Before building keep in mind that this program is intended for my
-personal needs and thus might require some tweaks in the source code to
-fit _your_ needs. Simply build `sysstat` with:
+Before building keep in mind that this program is intended for my personal needs
+and thus might require some tweaks in the source code to fit _your_ needs. Some
+options can be adjusted in `config.h` (requires recompilation). Simply build
+`sysstat` with:
 
 ```bash
 $ make
@@ -27,7 +28,7 @@ Dependencies
 Ideas
 -----
 
-Some  ideas I may implement at some point.
+Some ideas I may implement at some point.
 
 - extend `click_event` handling
 
