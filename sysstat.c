@@ -449,7 +449,8 @@ get_uptime(void)
 	unsigned long days = 0, hours = 0, minutes = 0;
 	char *timestring;
 
-	timestring = malloc(64);
+#define TIMESTRING_LEN 64
+	timestring = malloc(TIMESTRING_LEN);
 	if (timestring == NULL) {
 		return NULL;
 	}
@@ -466,14 +467,15 @@ get_uptime(void)
 	days = uptime / 24;
 
 	if (days) {
-		snprintf(timestring, 64, "%lud %luh", days, hours);
+		snprintf(timestring, TIMESTRING_LEN, "%lud %luh", days, hours);
 	}
 	else if (hours) {
-		snprintf(timestring, 64, "%luh %lum", hours, minutes);
+		snprintf(timestring, TIMESTRING_LEN, "%luh %lum", hours, minutes);
 	}
 	else {
-		snprintf(timestring, 64, "%lum", minutes);
+		snprintf(timestring, TIMESTRING_LEN, "%lum", minutes);
 	}
+#undef TIMESTRING_LEN
 
 	return timestring;
 }
@@ -484,8 +486,7 @@ get_battery_charge(void)
 	unsigned long charge_full, charge_current;
 	unsigned int charge_percentage = 0;
 	int plugged_in = 0;
-	/* 6 = sizeof("+100%") + \'0' */
-	char percentage_string[6];
+	char percentage_string[6]; /* 6 = sizeof("+100%") + \'0' */
 	char *ret;
 	FILE *sys_ac, *sys_charge_full, *sys_charge_current;
 
@@ -584,8 +585,7 @@ mpd_get_song(struct mpd_connection *connection, bool shorttext)
 	uri = mpd_song_get_uri(song);
 
 	if ((artist != NULL) && (title != NULL) && !shorttext) {
-		/* +4 = sizeof(" - ") + \0 */
-		songstring = malloc(strlen(artist) + strlen(title) + 4);
+		songstring = malloc(strlen(artist) + strlen(title) + 4); /* +4 = sizeof(" - ") + \0 */
 		if (songstring != NULL) {
 			sprintf(songstring, "%s - %s", artist, title);
 		}
@@ -622,8 +622,7 @@ get_mpd(struct mpd_connection *connection, bool shorttext)
 		goto cleanup;
 	}
 
-	/* 5 = " 100%" */
-	mpd_size = strnlen(song, 255) + 5 + 1;
+	mpd_size = strnlen(song, 255) + 6; /* +6 = " 100%" + '\0' */
 	mpd = malloc(mpd_size);
 	if (mpd == NULL) {
 		goto cleanup;
@@ -665,15 +664,17 @@ get_free_storage(bool check_home)
 		goto cleanup;
 	}
 
-	freestring = malloc(64);
+#define FREESTRING_LEN 64
+	freestring = malloc(FREESTRING_LEN);
 	if (freestring) {
 		if (check_home) {
-			snprintf(freestring, 64, "~/:%s /:%s", home, root);
+			snprintf(freestring, FREESTRING_LEN, "~/:%s /:%s", home, root);
 		}
 		else {
-			snprintf(freestring, 64, "/:%s", root);
+			snprintf(freestring, FREESTRING_LEN, "/:%s", root);
 		}
 	}
+#undef FREESTRING_LEN
 
 cleanup:
 	free(home_directory);
