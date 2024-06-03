@@ -3,7 +3,7 @@
 .POSIX:
 
 # sysstat version
-VERSION = 0.2
+VERSION = 0.3
 
 # Programm name
 NAME = sysstat

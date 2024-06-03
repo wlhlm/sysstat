@@ -10,18 +10,21 @@ includes a "fuzzy" clock (toggleable by clicking on the i3bar).
 Building/Installation
 ---------------------
 
-Before building keep in mind that this program is intended for my personal needs
-and thus might require some tweaks in the source code to fit _your_ needs. Some
-options can be adjusted in `config.h` (requires recompilation). Simply build
-`sysstat` with:
+Before building keep in mind that this program is mostly intended for the
+author's personal needs and thus might require some tweaks in the source code to
+fit _your_ setup. Some options can be adjusted in `config.h` (requires
+recompilation).
+
+Simply build `sysstat` with:
 
 ```bash
 $ make
 ```
+
 Dependencies
 ------------
 
-- linux kernel (relies on data from /proc)
+- linux kernel (relies on data from /proc and /sys, as well as `signalfd(2)` and `timerfd(2)`)
 - libmpdclient
 - yajl2
 
@@ -31,6 +34,7 @@ Ideas
 Some ideas I may implement at some point.
 
 - extend `click_event` handling
+- display currently selected keyboard layout
 
 License
 -------
