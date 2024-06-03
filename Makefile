@@ -10,11 +10,13 @@ NAME = sysstat
 
 # Includes and libs
 LIBS = libmpdclient yajl
-INCS = `pkg-config --cflags --libs ${LIBS}`
+INCS = `pkg-config --cflags ${LIBS}`
+LDINCS = `pkg-config --libs ${LIBS}`
 
 # Flags
 CPPFLAGS = -DVERSION=\"${VERSION}\" -DNAME=\"${NAME}\" -D_POSIX_C_SOURCE=200809L
-CFLAGS = -std=c99 -pedantic -Wall -Os ${INCS} ${CPPFLAGS} -lm
+LDFLAGS := -lm ${LDFLAGS} ${LDINCS}
+CFLAGS := -std=c99 -pedantic -Wall -Os ${CFLAGS} ${INCS} ${CPPFLAGS} ${LDFLAGS}
 
 # Enable debugging symbols
 ifdef DEBUG
