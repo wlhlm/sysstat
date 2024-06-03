@@ -793,7 +793,7 @@ print_status(void)
 static void
 parse_click_event(const char *buffer, size_t length)
 {
-	yajl_status status = yajl_parse(yajl_parser, CUC(buffer), length);
+	(void) yajl_parse(yajl_parser, CUC(buffer), length);
 }
 
 static void
