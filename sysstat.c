@@ -5,6 +5,7 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/timerfd.h>
+#include <sys/signalfd.h>
 #include <ifaddrs.h>
 
 #include <mpd/client.h>
@@ -23,6 +24,7 @@
 #include <signal.h>
 #include <limits.h>
 #include <math.h>
+#include <assert.h>
 
 #include "fuzzyclock.h"
 
@@ -83,6 +85,7 @@ static char *get_disk_free(const char *mount);
 static char *get_uptime(void);
 static char *get_battery_charge(void);
 static struct mpd_connection *mpd_connect(const char *host, unsigned int port, unsigned int timeout);
+static void mpd_try_reconnect(struct mpd_connection **connection);
 static float mpd_get_progress(struct mpd_connection *connection);
 static char *mpd_get_song(struct mpd_connection *connection, bool shorttext);
 static char *get_mpd(struct mpd_connection *connection, bool shorttext);
@@ -540,6 +543,23 @@ mpd_connect(const char *host, unsigned int port, unsigned int timeout)
 	return connection;
 }
 
+static void
+mpd_try_reconnect(struct mpd_connection **connection)
+{
+	assert(connection != NULL);
+
+	if (*connection != NULL) {
+		if (!mpd_connection_get_error(*connection)) {
+			mpd_connection_free(*connection);
+		} else {
+			/* mpd connection is fine, no need to reconnect. */
+			return;
+		}
+	}
+
+	*connection = mpd_connect(mpd_host, mpd_port, mpd_timeout);
+}
+
 static float
 mpd_get_progress(struct mpd_connection *connection)
 {
@@ -613,7 +633,7 @@ get_mpd(struct mpd_connection *connection, bool shorttext)
 		goto cleanup;
 	}
 
-	mpd_size = strnlen(song, 255) + 6; /* +6 = " 100%" + '\0' */
+	mpd_size = strnlen(song, 255) + 6; /* +6 = sizeof(" 100%") + '\0' */
 	mpd = malloc(mpd_size);
 	if (mpd == NULL) {
 		goto cleanup;
@@ -801,6 +821,8 @@ handle_click_event(ClickEvent event)
 {
 	use_fuzzytime = !use_fuzzytime;
 
+	/* In case mpd connection got severed, otherwise it's a noop. */
+	mpd_try_reconnect(&connection);
 	print_status();
 }
 
@@ -814,26 +836,33 @@ int
 main(int argc, char *argv[])
 {
 	int ret = EXIT_SUCCESS;
-	int timer = -1;
+	int timer_fd = -1;
+	int signal_fd = -1;
 
 	progname = argv[0];
 
 	/* Talking to mpd over a UNIX domain socket, we may receive SIGPIPE which
-	 * would normally terminate the process and we certainly don't want that. */
-	struct sigaction sa;
-	sa.sa_handler = SIG_IGN;
-	sigemptyset(&sa.sa_mask);
-	if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-		err("%s: failed to install signal handler: %s\n");
+	 * would normally terminate the process and we certainly don't want that.
+	 * Instead, we try to reconnect. */
+	sigset_t signal_fd_mask;
+	sigemptyset(&signal_fd_mask);
+	sigaddset(&signal_fd_mask, SIGPIPE);
+	if (sigprocmask(SIG_BLOCK, &signal_fd_mask, NULL) == -1) {
+		err("%s: failed to block SIGPIPE: %s\n");
 		return EXIT_FAILURE;
 	}
+	signal_fd = signalfd(signal_fd, &signal_fd_mask, 0);
+	if (signal_fd == -1) {
+		err("%s: failed to create signalfd: %s\n");
+		goto cleanup_fail;
+	}
 
-	timer = timerfd_create(CLOCK_MONOTONIC, 0);
-	if (timer == -1) {
+	timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
+	if (timer_fd == -1) {
 		err("%s: failed to create timerfd: %s\n");
 		goto cleanup_fail;
 	}
-	if (timerfd_settime(timer, 0,
+	if (timerfd_settime(timer_fd, 0,
 		        &((struct itimerspec) {
 			        .it_interval = ((struct timespec) {.tv_sec = refresh}),
 			        /* Workaround to have the timer immediately trigger on start */
@@ -845,7 +874,8 @@ main(int argc, char *argv[])
 
 	struct pollfd fds[] = {
 		{ .fd = STDIN_FILENO, .events = POLLIN },
-		{ .fd = timer, .events = POLLIN }
+		{ .fd = timer_fd, .events = POLLIN },
+		{ .fd = signal_fd, .events = POLLIN }
 	};
 
 	yajl_callbacks callbacks = {
@@ -880,9 +910,25 @@ main(int argc, char *argv[])
 
 	print_header();
 	for (;;) {
-		if (poll(fds, 2, -1) == -1) {
+		if (poll(fds, ARR_LEN(fds), -1) == -1) {
 			err("%s: failed waiting in poll(): %s\n");
 			goto cleanup_fail;
+		}
+
+		/* signalfd fired */
+		if (fds[2].revents & POLLIN) {
+			struct signalfd_siginfo signalret;
+
+			/* Discard signal data. */
+			(void) read(fds[2].fd, &signalret, sizeof(signalret));
+
+			/* Clean up mpd connection in case it caused a SIGPIPE. */
+			if (connection != NULL) {
+				if (!mpd_connection_get_error(connection)) {
+					mpd_connection_free(connection);
+					connection = NULL;
+				}
+			}
 		}
 
 		/* timerfd fired */
@@ -892,6 +938,9 @@ main(int argc, char *argv[])
 			/* Discard timer data. */
 			(void) read(fds[1].fd, &timerret, sizeof(timerret));
 
+			/* Retry in case mpd connection got severed, otherwise it's a noop.
+			 * */
+			mpd_try_reconnect(&connection);
 			print_status();
 
 		}
@@ -914,7 +963,8 @@ main(int argc, char *argv[])
 cleanup_fail:
 	ret = EXIT_FAILURE;
 cleanup:
-	close(timer);
+	close(timer_fd);
+	close(signal_fd);
 	free(kernel);
 	free(hostname);
 	free(user);
